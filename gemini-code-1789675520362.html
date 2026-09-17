@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Abyssal Descent: Terror Submarino</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body, html { width: 100%; height: 100%; overflow: hidden; font-family: 'Courier New', monospace; background: #010a10; color: #67e8f9; user-select: none; }
+    #canvas-container { width: 100vw; height: 100vh; }
+    
+    #crosshair {
+      position: absolute; top: 50%; left: 50%; width: 4px; height: 4px; margin-top: -2px; margin-left: -2px;
+      background: rgba(103, 232, 249, 0.7); border-radius: 50%; pointer-events: none; z-index: 10;
+    }
+
+    /* HUD */
+    #hud-top {
+      position: absolute; top: 20px; left: 20px; z-index: 10;
+      background: rgba(1, 15, 25, 0.85); border: 1px solid rgba(103, 232, 249, 0.3);
+      padding: 12px 18px; border-radius: 6px; width: 260px;
+    }
+
+    .bar-container { margin-bottom: 8px; }
+    .bar-label { font-size: 11px; margin-bottom: 3px; display: flex; justify-content: space-between; }
+    .bar-bg { width: 100%; height: 10px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }
+    .bar-fill { height: 100%; width: 100%; transition: width 0.2s ease; }
+    
+    #oxy-fill { background: #06b6d4; }
+    #bat-fill { background: #eab308; }
+
+    #probes-count { font-size: 13px; color: #a5f3fc; margin-top: 6px; }
+
+    /* SONAR RADAR */
+    #radar-container {
+      position: absolute; bottom: 20px; right: 20px; z-index: 10;
+      background: rgba(1, 15, 25, 0.9); border: 2px solid #0891b2;
+      border-radius: 50%; padding: 4px; box-shadow: 0 0 15px rgba(8, 145, 178, 0.4);
+    }
+    #radarCanvas { width: 140px; height: 140px; border-radius: 50%; display: block; }
+
+    #interaction-hint {
+      position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%);
+      font-size: 14px; color: #a5f3fc; z-index: 10; background: rgba(1, 15, 25, 0.9);
+      padding: 8px 16px; border-radius: 4px; border: 1px solid #0891b2; display: none;
+    }
+
+    #underwater-overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      pointer-events: none; z-index: 5;
+      box-shadow: inset 0 0 120px rgba(0, 10, 20, 0.95);
+      background: radial-gradient(circle, transparent 40%, rgba(1, 15, 25, 0.8) 100%);
+    }
+
+    #danger-overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      pointer-events: none; z-index: 6; opacity: 0; transition: opacity 0.2s;
+      background: radial-gradient(circle, rgba(239, 68, 68, 0.25) 0%, rgba(0,0,0,0.8) 100%);
+    }
+
+    #start-screen, #end-screen {
+      position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: #010a10; display: flex; flex-direction: column; justify-content: center; align-items: center;
+      z-index: 50; text-align: center; padding: 20px;
+    }
+
+    #end-screen { display: none; }
+
+    .btn {
+      padding: 12px 28px; background: #0891b2; color: #fff; font-size: 15px; font-weight: bold;
+      border: none; cursor: pointer; border-radius: 4px; margin-top: 20px;
+      box-shadow: 0 0 15px rgba(8, 145, 178, 0.5); transition: 0.2s; font-family: inherit;
+    }
+    .btn:hover { background: #06b6d4; transform: scale(1.05); }
+
+    #subtitles {
+      position: fixed; bottom: 12%; left: 50%; transform: translateX(-50%);
+      background: rgba(1, 15, 25, 0.9); color: #a5f3fc; padding: 10px 20px; font-size: 14px;
+      border-radius: 4px; display: none; z-index: 40; border: 1px solid rgba(8, 145, 178, 0.4);
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<div id="crosshair"></div>
+<div id="underwater-overlay"></div>
+<div id="danger-overlay"></div>
+
+<div id="hud-top">
+  <div class="bar-container">
+    <div class="bar-label"><span>OXÍGENO</span><span id="oxy-text">100%</span></div>
+    <div class="bar-bg"><div id="oxy-fill" class="bar-fill"></div></div>
+  </div>
+  <div class="bar-container">
+    <div class="bar-label"><span>LINTERNA [F]</span><span id="bat-text">100%</span></div>
+    <div class="bar-bg"><div id="bat-fill" class="bar-fill"></div></div>
+  </div>
+  <div id="probes-count">SONDAS RECUPERADAS: 0 / 3</div>
+</div>
+
+<div id="radar-container">
+  <canvas id="radarCanvas" width="140" height="140"></canvas>
+</div>
+
+<div id="interaction-hint">Presiona [E] para recuperar sonda</div>
+<div id="subtitles"></div>
+
+<div id="start-screen">
+  <h1 style="color:#06b6d4; font-size: 32px; margin-bottom: 12px; letter-spacing: 2px;">ABYSSAL DESCENT</h1>
+  <p style="color:#94a3b8; max-width: 500px; line-height: 1.6; font-size: 14px;">
+    Descendiste a la fosa de Mariana. Recupera las 3 sondas de datos extraviadas. <br><br>
+    Vigila tu **oxígeno** y usa el **sonar radar** para ubicar los objetivos. Algo hambriento vaga en la penumbra.
+  </p>
+  <button class="btn" onclick="startGame()">INICIAR INMERSIÓN</button>
+</div>
+
+<div id="end-screen">
+  <h1 id="end-title" style="font-size: 32px; margin-bottom: 12px;"></h1>
+  <p id="end-desc" style="color:#94a3b8; max-width: 480px; line-height: 1.5; font-size: 14px;"></p>
+  <button class="btn" onclick="location.reload()">REINTENTAR</button>
+</div>
+
+<script>
+  let scene, camera, renderer, controls, flashlight, ambientLight;
+  let moveFwd = false, moveBwd = false, moveLft = false, moveRgt = false, moveUp = false, moveDown = false;
+  let prevTime = performance.now();
+  const velocity = new THREE.Vector3(), direction = new THREE.Vector3();
+
+  // Estado del Jugador
+  let oxygen = 100;
+  let battery = 100;
+  let flashlightOn = true;
+  let probesCollected = 0;
+  const TOTAL_PROBES = 3;
+  let isGameOver = false;
+
+  // Entidades
+  let probes = [];
+  let oxygenTanks = [];
+  let creature;
+  let creatureSpeed = 4.5;
+
+  // Radar
+  let radarCanvas, radarCtx;
+  let radarAngle = 0;
+
+  function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x010a10);
+    scene.fog = new THREE.FogExp2(0x010a10, 0.045);
+
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+    scene.add(camera);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    controls = new THREE.PointerLockControls(camera, document.body);
+
+    // Luces
+    ambientLight = new THREE.AmbientLight(0x0284c7, 0.15);
+    scene.add(ambientLight);
+
+    flashlight = new THREE.SpotLight(0xa5f3fc, 4.0, 25, Math.PI / 5, 0.4, 1);
+    flashlight.position.set(0.2, -0.2, 0);
+    camera.add(flashlight);
+    flashlight.target.position.set(0, -0.2, -5);
+    camera.add(flashlight.target);
+
+    // Radar Canvas
+    radarCanvas = document.getElementById('radarCanvas');
+    radarCtx = radarCanvas.getContext('2d');
+
+    buildUnderwaterEnvironment();
+    spawnEntities();
+    setupControls();
+
+    window.addEventListener('resize', onWindowResize);
+    animate();
+  }
+
+  function buildUnderwaterEnvironment() {
+    // Lecho marino irregular
+    const floorGeo = new THREE.PlaneGeometry(160, 160, 40, 40);
+    floorGeo.rotateX(-Math.PI / 2);
+    const pos = floorGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setY(i, Math.sin(pos.getX(i) * 0.1) * Math.cos(pos.getZ(i) * 0.1) * 2.5);
+    }
+    floorGeo.computeVertexNormals();
+
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x072738, roughness: 0.9 });
+    const seabed = new THREE.Mesh(floorGeo, floorMat);
+    seabed.position.y = -2;
+    scene.add(seabed);
+
+    // Rocas y estructuras abisales
+    const rockGeo = new THREE.DodecahedronGeometry(1, 1);
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x031b29, roughness: 0.8 });
+
+    for (let i = 0; i < 45; i++) {
+      const rock = new THREE.Mesh(rockGeo, rockMat);
+      const scale = 2 + Math.random() * 5;
+      rock.scale.set(scale, scale * (0.8 + Math.random()*0.8), scale);
+      rock.position.set((Math.random() - 0.5) * 130, -2 + scale/2, (Math.random() - 0.5) * 130);
+      rock.rotation.set(Math.random(), Math.random(), 0);
+      scene.add(rock);
+    }
+
+    // Partículas flotantes (Nieve marina)
+    const partGeo = new THREE.BufferGeometry();
+    const partCount = 800;
+    const posArray = new Float32Array(partCount * 3);
+    for (let i = 0; i < partCount * 3; i += 3) {
+      posArray[i] = (Math.random() - 0.5) * 120;
+      posArray[i+1] = Math.random() * 20 - 2;
+      posArray[i+2] = (Math.random() - 0.5) * 120;
+    }
+    partGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+    const partMat = new THREE.PointsMaterial({ size: 0.15, color: 0x38bdf8, transparent: true, opacity: 0.4 });
+    const particles = new THREE.Points(partGeo, partMat);
+    scene.add(particles);
+  }
+
+  function spawnEntities() {
+    // Sondas de datos (3 ubicaciones)
+    const probeGeo = new THREE.CylinderGeometry(0.4, 0.4, 1.2, 12);
+    const probeMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.8, roughness: 0.2 });
+
+    const coords = [
+      { x: -35, z: -40 },
+      { x: 40, z: -25 },
+      { x: -10, z: 45 }
+    ];
+
+    coords.forEach((c) => {
+      const probe = new THREE.Mesh(probeGeo, probeMat);
+      probe.position.set(c.x, 0, c.z);
+
+      const beacon = new THREE.PointLight(0x06b6d4, 2, 8);
+      beacon.position.set(0, 0.8, 0);
+      probe.add(beacon);
+
+      scene.add(probe);
+      probes.push(probe);
+    });
+
+    // Tanques de oxígeno extras
+    const tankGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.8, 12);
+    const tankMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.3 });
+    for(let i=0; i<3; i++) {
+      const tank = new THREE.Mesh(tankGeo, tankMat);
+      tank.position.set((Math.random() - 0.5) * 80, -0.5, (Math.random() - 0.5) * 80);
+      scene.add(tank);
+      oxygenTanks.push(tank);
+    }
+
+    // La Criatura
+    const creatGroup = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x020617, roughness: 0.9 });
+    const body = new THREE.Mesh(new THREE.ConeGeometry(1.5, 6, 8), bodyMat);
+    body.rotation.x = Math.PI / 2;
+    creatGroup.add(body);
+
+    // Ojos brillantes
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.15), eyeMat);
+    eyeL.position.set(-0.5, 0.2, -2.8);
+    const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.15), eyeMat);
+    eyeR.position.set(0.5, 0.2, -2.8);
+    creatGroup.add(eyeL); creatGroup.add(eyeR);
+
+    creature = creatGroup;
+    creature.position.set(0, 2, -60);
+    scene.add(creature);
+  }
+
+  function setupControls() {
+    document.addEventListener('keydown', (e) => {
+      if (isGameOver) return;
+      if (e.code === 'KeyW') moveFwd = true;
+      if (e.code === 'KeyS') moveBwd = true;
+      if (e.code === 'KeyA') moveLft = true;
+      if (e.code === 'KeyD') moveRgt = true;
+      if (e.code === 'Space') moveUp = true;
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') moveDown = true;
+      if (e.code === 'KeyF') toggleFlashlight();
+      if (e.code === 'KeyE') interact();
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (e.code === 'KeyW') moveFwd = false;
+      if (e.code === 'KeyS') moveBwd = false;
+      if (e.code === 'KeyA') moveLft = false;
+      if (e.code === 'KeyD') moveRgt = false;
+      if (e.code === 'Space') moveUp = false;
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') moveDown = false;
+    });
+  }
+
+  function toggleFlashlight() {
+    if (battery <= 0) return;
+    flashlightOn = !flashlightOn;
+    flashlight.intensity = flashlightOn ? 4.0 : 0;
+  }
+
+  function startGame() {
+    document.getElementById('start-screen').style.display = 'none';
+    controls.lock();
+    camera.position.set(0, 2, 0);
+    showSubtitle("Sistemas en línea. Localiza las sondas usando el radar.", 4000);
+  }
+
+  function interact() {
+    // Recoger Sondas
+    probes.forEach((probe) => {
+      if (probe.visible && camera.position.distanceTo(probe.position) < 3.5) {
+        probe.visible = false;
+        probesCollected++;
+        document.getElementById('probes-count').textContent = `SONDAS RECUPERADAS: ${probesCollected} / ${TOTAL_PROBES}`;
+        showSubtitle(`¡Sonda ${probesCollected} recuperada!`, 3000);
+
+        if (probesCollected >= TOTAL_PROBES) {
+          endGame(true, "MISIÓN CUMPLIDA", "Lograste recuperar todos los datos intactos y escapar de la fosa.");
+        }
+      }
+    });
+
+    // Recoger Oxígeno
+    oxygenTanks.forEach((tank) => {
+      if (tank.visible && camera.position.distanceTo(tank.position) < 3.0) {
+        tank.visible = false;
+        oxygen = Math.min(100, oxygen + 35);
+        showSubtitle("Tanque de oxígeno recuperado (+35%)", 3000);
+      }
+    });
+  }
+
+  function showSubtitle(text, duration = 3000) {
+    const sub = document.getElementById('subtitles');
+    sub.style.display = 'block'; sub.textContent = text;
+    setTimeout(() => { sub.style.display = 'none'; }, duration);
+  }
+
+  function endGame(win, title, desc) {
+    isGameOver = true;
+    controls.unlock();
+    const screen = document.getElementById('end-screen');
+    const titleEl = document.getElementById('end-title');
+    titleEl.textContent = title;
+    titleEl.style.color = win ? "#06b6d4" : "#ef4444";
+    document.getElementById('end-desc').textContent = desc;
+    screen.style.display = 'flex';
+  }
+
+  function updateHUD(delta) {
+    if (isGameOver) return;
+
+    // Consumo Oxígeno
+    oxygen -= 1.8 * delta;
+    document.getElementById('oxy-text').textContent = `${Math.max(0, Math.round(oxygen))}%`;
+    document.getElementById('oxy-fill').style.width = `${Math.max(0, oxygen)}%`;
+
+    if (oxygen <= 0) {
+      endGame(false, "SIN OXÍGENO", "Tu soporte vital colapsó en la penumbra del océano.");
+      return;
+    }
+
+    // Consumo Batería
+    if (flashlightOn) {
+      battery -= 2.2 * delta;
+      if (battery <= 0) {
+        battery = 0; flashlightOn = false; flashlight.intensity = 0;
+      }
+    }
+    document.getElementById('bat-text').textContent = `${Math.max(0, Math.round(battery))}%`;
+    document.getElementById('bat-fill').style.width = `${Math.max(0, battery)}%`;
+  }
+
+  function drawRadar() {
+    const w = radarCanvas.width, h = radarCanvas.height;
+    const cx = w / 2, cy = h / 2, radius = w / 2 - 4;
+
+    radarCtx.clearRect(0, 0, w, h);
+
+    // Fondo y Red
+    radarCtx.fillStyle = 'rgba(1, 20, 32, 0.9)';
+    radarCtx.beginPath(); radarCtx.arc(cx, cy, radius, 0, Math.PI * 2); radarCtx.fill();
+
+    radarCtx.strokeStyle = 'rgba(8, 145, 178, 0.3)';
+    radarCtx.lineWidth = 1;
+    radarCtx.beginPath(); radarCtx.arc(cx, cy, radius * 0.6, 0, Math.PI * 2); radarCtx.stroke();
+    radarCtx.beginPath(); radarCtx.arc(cx, cy, radius * 0.3, 0, Math.PI * 2); radarCtx.stroke();
+
+    // Barrido giratorio
+    radarAngle += 0.03;
+    radarCtx.strokeStyle = 'rgba(6, 182, 212, 0.8)';
+    radarCtx.beginPath();
+    radarCtx.moveTo(cx, cy);
+    radarCtx.lineTo(cx + Math.cos(radarAngle) * radius, cy + Math.sin(radarAngle) * radius);
+    radarCtx.stroke();
+
+    const pPos = camera.position;
+    const scale = 1.2;
+
+    // Renderizar Sondas (Azul)
+    probes.forEach(p => {
+      if (!p.visible) return;
+      const dx = (p.position.x - pPos.x) * scale;
+      const dz = (p.position.z - pPos.z) * scale;
+      if (Math.hypot(dx, dz) < radius) {
+        radarCtx.fillStyle = '#06b6d4';
+        radarCtx.beginPath(); radarCtx.arc(cx + dx, cy + dz, 3, 0, Math.PI * 2); radarCtx.fill();
+      }
+    });
+
+    // Renderizar Criatura (Rojo)
+    if (creature) {
+      const dx = (creature.position.x - pPos.x) * scale;
+      const dz = (creature.position.z - pPos.z) * scale;
+      if (Math.hypot(dx, dz) < radius) {
+        radarCtx.fillStyle = '#ef4444';
+        radarCtx.beginPath(); radarCtx.arc(cx + dx, cy + dz, 4, 0, Math.PI * 2); radarCtx.fill();
+      }
+    }
+
+    // Jugador (Centro)
+    radarCtx.fillStyle = '#a5f3fc';
+    radarCtx.beginPath(); radarCtx.arc(cx, cy, 2.5, 0, Math.PI * 2); radarCtx.fill();
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const time = performance.now();
+    const delta = (time - prevTime) / 1000;
+
+    if (controls.isLocked && !isGameOver) {
+      updateHUD(delta);
+
+      // Física y Flotación Submarina
+      const damping = 4.0;
+      velocity.x -= velocity.x * damping * delta;
+      velocity.z -= velocity.z * damping * delta;
+      velocity.y -= velocity.y * damping * delta;
+
+      direction.z = Number(moveFwd) - Number(moveBwd);
+      direction.x = Number(moveRgt) - Number(moveLft);
+      direction.y = Number(moveUp) - Number(moveDown);
+      direction.normalize();
+
+      const speed = 14.0;
+      if (moveFwd || moveBwd) velocity.z -= direction.z * speed * delta;
+      if (moveLft || moveRgt) velocity.x -= direction.x * speed * delta;
+      if (moveUp || moveDown) velocity.y += direction.y * speed * delta;
+
+      controls.moveRight(-velocity.x * delta);
+      controls.moveForward(-velocity.z * delta);
+      camera.position.y += velocity.y * delta;
+
+      // Límites de Altura
+      if (camera.position.y < -0.5) camera.position.y = -0.5;
+      if (camera.position.y > 15.0) camera.position.y = 15.0;
+
+      // Lógica de la Criatura
+      const distToCreature = camera.position.distanceTo(creature.position);
+      
+      creature.lookAt(camera.position);
+      creature.translateZ(creatureSpeed * delta);
+
+      const dangerOpacity = distToCreature < 18 ? (1 - distToCreature / 18) : 0;
+      document.getElementById('danger-overlay').style.opacity = dangerOpacity;
+
+      if (distToCreature < 2.5) {
+        endGame(false, "DEVORADO", "Una entidad desconocida te arrastró hacia las honduras.");
+      }
+
+      let nearInteractive = false;
+      probes.forEach(p => {
+        if (p.visible && camera.position.distanceTo(p.position) < 3.5) nearInteractive = true;
+      });
+      oxygenTanks.forEach(t => {
+        if (t.visible && camera.position.distanceTo(t.position) < 3.0) nearInteractive = true;
+      });
+      document.getElementById('interaction-hint').style.display = nearInteractive ? 'block' : 'none';
+
+      drawRadar();
+    }
+
+    prevTime = time;
+    renderer.render(scene, camera);
+  }
+
+  function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  window.onload = init;
+</script>
+</body>
+</html>
